@@ -1,0 +1,1528 @@
+---
+title: "ROSMAP_MT"
+author: "Raymond Yuan SHANG"
+date: "8/1/2019"
+output: html_document
+---
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#install.packages(c("dynamicTreeCut", "cluster", "flashClust", "Hmisc", "reshape", "foreach", "doParallel") ) 
+#source("http://bioconductor.org/biocLite.R") 
+#biocLite("WGCNA")
+library(WGCNA)
+library(cluster)
+library(flashClust)
+library("readxl")
+library("openxlsx")
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(org.Rn.eg.db)
+library(ggplot2)
+library(venn)
+library(tidyverse)
+library(limma)
+library("edgeR")
+library(org.Hs.eg.db)
+
+options(stringsAsFactors = FALSE)
+#theme_set(theme_bw())
+theme_set(theme_bw()) + theme_update(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),plot.title = element_text(hjust = 0.5),legend.title=element_blank()) #legend.position = c(0.8, 0.8),
+```
+
+```{r}
+rm(list=ls())
+keytypes(org.Hs.eg.db)
+```
+
+```{r}
+wrapper <- function(x, ...) 
+{
+  paste(strwrap(x, ...), collapse = "\n")
+}
+
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title=fit$genename,subtitle = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, digits=5),
+                     "Intercept =",signif(fit$coef[[1]],5 ),"\n",
+                     "Slope =",signif(fit$coef[[2]], 5),
+                     " P =",signif(summary(fit)$coef[2,4], 5)))
+}
+plot(density(rnorm(10000)))
+```
+
+
+
+##Define geneSets
+```{r}
+###human
+complex1_human <- c( "MT-ND1","MT-ND2","MT-ND3","MT-ND4","MT-ND4L","MT-ND5","MT-ND6",
+                      "NDUFS1","NDUFS2","NDUFS3","NDUFS7","NDUFS8","NDUFV1","NDUFV2","NDUFAB1","NDUFA1","NDUFA2","NDUFA3","NDUFA5","NDUFA6",
+                      "NDUFA7","NDUFA8","NDUFA9","NDUFA10","NDUFA11","NDUFA12","NDUFA13","NDUFB1","NDUFB2","NDUFB3","NDUFB4",
+                      "NDUFB5","NDUFB6","NDUFB7","NDUFB8","NDUFB9","NDUFB10","NDUFB11","NDUFC1","NDUFC2","NDUFS4","NDUFS5","NDUFS6","NDUFV3")
+
+complex2_human <- c("SDHA","SDHB","SDHC","SDHD")
+
+
+complex3_human <- c("MT-CYB","CYC1","UQCRB","UQCRC1","UQCRC2","UQCRFS1","UQCRH","UQCRQ","UQCR10","UQCR11")
+
+
+complex4_human <- c("MT-CO1","MT-CO2","MT-CO3",
+                    "COX4I1","COX4I2","COX5A","COX5B","COX6A1","COX6A2","COX6B1","COX6B2","COX6C",
+                    "COX7A1","COX7A2","COX7B","COX7B2","COX7C","COX8A","COX8C")
+
+complex5_human <-c("MT-ATP6","MT-ATP8",
+                   "ATP5F1A","ATP5F1B","ATP5F1C","ATP5F1D","ATP5F1E","ATP5MC1","ATP5MC2","ATP5MC3",
+                    "ATP5MD","ATP5ME","ATP5MF","ATP5MG","ATP5MPL","ATP5PB","ATP5PD","ATP5PF","ATP5PO","ATP5IF1")
+
+MT_human <- c("MT-ND1","MT-ND2","MT-ND3","MT-ND4","MT-ND4L","MT-ND5","MT-ND6","MT-CYB","MT-CO1","MT-CO2","MT-CO3","MT-ATP6","MT-ATP8")
+
+synapseMarkers <- c("RAB3C","RAB27B","SYNJ1","GAD2","CALB1","DNAJC6","DCLK1","GABRG2")
+#others_human <- c("Ndufa4","Ndufa4l2","Ndufaf1","Ndufaf2","Ndufaf3","Ndufaf4")
+
+```
+
+```{r}
+##BrainCellBioMarker_human.xlsx
+#BrainNeuronStemCellBioMarker_human.xlsx
+cellMarkers <- read_excel("~/Dropbox/RaymondTools/others/BrainCellBioMarker_human.xlsx",sheet=1) #BrainNeuronStemCellBioMarker_human.xlsx
+colnames(cellMarkers)
+# [1] "Neuroepithelial"              "SchwannCellPrecursor"         "MyelinatingSchwannCell"       "NonMyelinatingSchwannCell"    "RadialGlia"                   "OligodendrocytePrecursorCell" "Oligodendrocytes"            
+# [8] "Astrocytes"                   "Microglia"                    "IntermediateProgenitors"      "ImmatureNeurons"              "MatureNeurons"                "GlutamatergicNeurons"         "GABAergic Neurons"           
+#[15] "Dopaminergic Neurons"         "Serotonergic Neurons"         "Cholinergic Neurons" 
+cellMarkers <- as.data.frame(cellMarkers)
+celltypes <- colnames(cellMarkers)
+celltypes
+```
+
+
+##read demographic information
+```{r}
+s2c4 <- read.csv(file = "~/Dropbox/human/ROSMAP/RNASeq/demographic_tidy2.csv",stringsAsFactors = FALSE)
+head(s2c4$rnaseq_id)
+colnames(s2c4)
+
+t2g_all <- read.csv(file="~/Dropbox/RaymondTools/DEG/tx2gene_genecodeV24_humanV3.txt",header=TRUE,stringsAsFactors = FALSE)
+head(t2g_all)
+t2g <- t2g_all[,c(1,2)]
+head(t2g)
+```
+
+
+
+
+
+
+
+#ROSMAP
+```{r}
+#ROSMAP_DLPFC_netResidualExpression.tsv
+plotDistribution = function (x) {
+  N = length(x)
+  x <- na.omit(x)
+  hist( x,col = "light blue",
+        probability = TRUE)
+  lines(density(x), col = "red", lwd = 3)
+  rug(x)
+  print(N-length(x))
+}
+
+#MAYO_CBE_TCX_netResidualExpression.tsv
+#MSSM_FP_STG_PHG_IFG_netResidualExpression.tsv
+#ROSMAP_DLPFC_netResidualExpression.tsv
+
+dir_ROSMAPReseq="~/Dropbox/human/RNAResequence/ROSMAP"  #MayoRNAseq,MSBB,ROSMAP
+
+```
+
+
+
+##read row counts data
+```{r}
+#ROSMAP_DLPFC_eCounts.tsv,ROSMAP_DLPFC_Counts.tsv
+expr_ROSMAP_counts <- read.delim2(file=paste0(dir_ROSMAPReseq,"/","ROSMAP_DLPFC_Counts.tsv"))
+str(expr_ROSMAP_counts[1:5,1:5])
+rownames(expr_ROSMAP_counts) <- expr_ROSMAP_counts[,1]
+expr_ROSMAP_counts <- expr_ROSMAP_counts[,-1]
+lapply(expr_ROSMAP_counts,as.numeric,2) -> expr_ROSMAP_counts2
+data.frame(expr_ROSMAP_counts2,check.names = F) -> expr_ROSMAP_counts2
+rownames(expr_ROSMAP_counts2) <- rownames(expr_ROSMAP_counts)
+
+expr_ROSMAP_counts2[1:5,1:5]
+```
+
+
+
+#make DGEList object, clean data
+```{r}
+cols_filter <- colnames(expr_ROSMAP_counts2)    #632 samples
+cols_filter[cols_filter %in% paste0("X",s2c4$rnaseq_id)] ->cols_filter2  ##614 samples
+s2c4 -> s2c4_ROSMAP_yshang
+rownames(s2c4_ROSMAP_yshang) <- paste0("X",s2c4_ROSMAP_yshang$rnaseq_id)
+s2c4_ROSMAP_yshang[cols_filter2,] ->s2c4_ROSMAP_yshang
+
+
+x <- DGEList(expr_ROSMAP_counts2[,cols_filter2])
+x[1:5,1:5]
+cols_x <- colnames(x)
+cols_x == rownames(s2c4_ROSMAP_yshang)
+x$samples$group <- s2c4_ROSMAP_yshang$AD
+
+#Batch,apoe_genotype, msex, AD
+x$samples$Batch <- factor(s2c4_ROSMAP_yshang$Batch)
+x$samples$apoe_genotype <- factor(s2c4_ROSMAP_yshang$apoe_genotype)
+x$samples$msex <- factor(s2c4_ROSMAP_yshang$msex)
+x$samples$pmi <- as.numeric(s2c4_ROSMAP_yshang$pmi)
+x$samples$AOD <- as.numeric(s2c4_ROSMAP_yshang$age_death)
+x$samples$RIN <- as.numeric(s2c4_ROSMAP_yshang$RINcontinuous)
+x$samples$RIN2 <- as.numeric(s2c4_ROSMAP_yshang$RINcontinuous * s2c4_ROSMAP_yshang$RINcontinuous)
+x$samples$groupCom <- paste0(x$samples$group,".",x$samples$msex,".",x$samples$apoe_genotype)
+x$samples$AOD2 <- cut(x$samples[,"AOD"], breaks=c(0, 75,80,85,90,Inf),right = FALSE)
+x$samples$AOD2 <- gsub('\\[',"",as.character(x$samples$AOD2))
+x$samples$AOD2 <- gsub('\\)',"",as.character(x$samples$AOD2))
+x$samples$AOD2 <- gsub('\\,',"_",as.character(x$samples$AOD2))
+x$samples$Braak <- as.numeric(s2c4_ROSMAP_yshang$braaksc)
+x$samples$rna_id <- s2c4_ROSMAP_yshang$rnaseq_id
+class(x)
+dim(x)
+#x_pre <- x
+x <- x[,x$samples$apoe_genotype %in% c("APOE33","APOE23","APOE34") ]
+x$samples$apoe_genotype <- droplevels(x$samples$apoe_genotype)
+dim(x)
+
+genes <- as.data.frame(rownames(x$counts),stringsAsFactors=FALSE)
+colnames(genes) <- "ENSEMBL"  #"HGNC_SYMBOL"
+genes$ENSEMBL[!(genes$ENSEMBL %in% t2g_all$GENEID)]
+#"ENSG00000273748" "ENSG00000271254" "ENSG00000278817" "ENSG00000277196"
+
+
+id_gene <- unique(t2g_all[,c(3,2,4,5,6)])
+id_gene <- id_gene[!duplicated(id_gene$GENEID),]
+id_gene$ENSEMBL <- id_gene$GENEID
+#tmp_merge <- merge(genes,id_symbol,by.x="HGNC_SYMBOL",by.y='HGNC_SYMBOL',all.x=TRUE)
+genes_df <- dplyr::left_join(genes,id_gene,by="ENSEMBL")
+x$genes <- dplyr::slice(genes_df,match(genes$ENSEMBL,genes_df$ENSEMBL))
+
+length(x$genes$ENSEMBL ) - length(unique(x$genes$ENSEMBL)) ##Should be 0, otherwise, not 1:1 
+dim(x)  # 15582 588
+
+"COX1" %in% x$genes$HGNC_SYMBOL
+"ENSG00000131055" %in% x$genes$ENSEMBL
+complex1_human[!(complex1_human %in% x$genes$HGNC_SYMBOL)]
+#"ENSG00000178127","ENSG00000267855"
+#"NDUFV2","NDUFA7"
+
+complex2_human[!(complex2_human %in% x$genes$HGNC_SYMBOL)]
+complex3_human[!(complex3_human %in% x$genes$HGNC_SYMBOL)]
+complex4_human[!(complex4_human %in% x$genes$HGNC_SYMBOL)]
+#"ENSG00000131055",
+#"COX4I2" "COX6A2" "COX6B2" "COX7B2" "COX8C" 
+complex5_human[!(complex5_human %in% x$genes$HGNC_SYMBOL)]
+dim(x)   #15582 588
+```
+
+##Before normalization
+```{r}
+library(RColorBrewer)
+y=x
+col <- brewer.pal( dim(x)[2], "Paired")
+lcpm_y <- cpm(y, log=TRUE,prior.count = 0.25)  #0.25
+{
+png("Fig1/BeforeNormalization Lcpm.png",width = 1280, height = 960)
+plot(density(lcpm_y[,1]), col=col[1], lwd=2, ylim=c(0,0.21), las=2, 
+     main="", xlab="")
+title(main=paste0("Before Normalization (first 12 samples:",length(lcpm_y)/588,")genes"), xlab="Log-cpm")
+abline(v=0, lty=3)
+for (i in 1:12){
+   den <- density(lcpm_y[,i])
+   lines(den$x, den$y, col=col[i], lwd=2)
+}
+dev.off()
+}
+```
+
+##After normalization
+```{r}
+x <- calcNormFactors(x, method = "TMM")
+x$samples$norm.factors
+{
+  png("Fig1/Normalization_lcpm.png",width = 1280, height = 600)
+par(mfrow=c(1,2))
+{
+  plot(density(lcpm_y[,1]), col=col[1], lwd=2, ylim=c(0,0.21), las=2, 
+     main="", xlab="")
+title(main=paste0("Before Normalization (first 12 samples:",length(lcpm_y)/588,")genes"), xlab="Log-cpm")
+abline(v=0, lty=3)
+for (i in 1:12){
+   den <- density(lcpm_y[,i])
+   lines(den$x, den$y, col=col[i], lwd=2)
+}
+}
+{
+lcpm_x <- cpm(x, log=TRUE,prior.count = 0.25)  #5
+plot(density(lcpm_x[,1]), col=col[1], lwd=2, ylim=c(0,0.21), las=2, 
+     main="", xlab="")
+title(main=paste0("After Normalization:first 12 samples(",length(lcpm_x)/588,") genes"), xlab="Log-cpm")
+abline(v=0, lty=3)
+for (i in 2:12){
+   den <- density(lcpm_x[,i])
+   lines(den$x, den$y, col=col[i], lwd=2)
+}
+
+
+}
+
+dev.off()
+}
+```
+
+##save results
+```{r}
+x_ROSMAP =x
+lcpm_x_ROSMAP = lcpm_x
+```
+
+## Remove covariates
+###Plot lcpm ~ covariante to check potential effects
+```{r}
+y=x_ROSMAP
+lcpm_mds <- lcpm_x_ROSMAP
+MT_genes <- MT_human
+MT_genes_ENSG <- dplyr::filter(x_ROSMAP$genes,x_ROSMAP$genes$HGNC_SYMBOL %in% MT_human)
+MT_genes_ENSG <- MT_genes_ENSG$ENSEMBL
+MT_genes_ENSG %>% length()
+
+expr_currentGene <- lcpm_mds["ENSG00000198888",]  #ENSG00000198888, MT-ND1, c("ENSG00000198888","ENSG00000198763")
+expr_currentGene2 <- lcpm_mds["ENSG00000198727",]  #ENSG00000198727 MT-CYB   #ENSG00000125356 NDUFA1 #ENSG00000198763 ND2
+expr_currentGene3 <- lcpm_mds["ENSG00000125356",]  #NDUFA1
+plot(density(t(expr_currentGene)))
+
+ df_current <- data.frame(sample=names(expr_currentGene),lcpm = t(t(expr_currentGene)) )
+ df_current$lcpm <- t(t(expr_currentGene))
+ df_current$gene2 <- t(t(expr_currentGene2))
+  df_current$gene3 <- t(t(expr_currentGene3))
+
+ df_current$AOD <- x_ROSMAP$samples$AOD[match(df_current$sample,rownames(x_ROSMAP$samples))]
+df_current$AOD2 <- x_ROSMAP$samples$AOD2[match(df_current$sample,rownames(x_ROSMAP$samples))]
+
+ df_current$AD <- x_ROSMAP$samples$groupCom[match(df_current$sample,rownames(x_ROSMAP$samples))]
+ df_current$AD <- gsub("\\..*","",df_current$AD)
+ df_current$RIN <- x_ROSMAP$samples$RIN[match(df_current$sample,rownames(x_ROSMAP$samples))]
+df_current$PMI <- x_ROSMAP$samples$pmi[match(df_current$sample,rownames(x_ROSMAP$samples))]
+df_current$Sex <- x_ROSMAP$samples$msex[match(df_current$sample,rownames(x_ROSMAP$samples))]
+df_current$Braak <- x_ROSMAP$samples$Braak[match(df_current$sample,rownames(x_ROSMAP$samples))]
+df_current$APOE <- x_ROSMAP$samples$apoe_genotype[match(df_current$sample,rownames(x_ROSMAP$samples))]
+df_current$Batch <- x_ROSMAP$samples$Batch[match(df_current$sample,rownames(x_ROSMAP$samples))]
+
+ plot(lcpm ~ AOD, df_current,main="Age of death")
+ plot(lcpm ~ RIN, df_current,main="RIN")
+ plot(lcpm ~ Batch, df_current,main="Batch")
+ plot(lcpm ~ Sex, df_current,main="Sex")
+ plot(lcpm ~ APOE, df_current,main="APOE")
+ plot(lcpm ~ Braak, df_current,main="Braak")
+ plot(lcpm ~ PMI, df_current,main="PMI")
+ 
+ 
+ plot(lcpm ~ gene2, df_current)
+ plot(lcpm ~ gene3, df_current)
+
+
+ ggplot(data=df_current[df_current$Sex == "M",],aes_string(x="AOD",y="lcpm",col="AD"))+
+   geom_point()
+ 
+  p<- ggplot(data=df_current,aes_string(x="RIN",y="lcpm",col="Batch"))+
+   geom_point(size=4)
+  ggsave(p,filename = "Fig1/BatchRIN.png")
+  
+  ggplot(data=df_current,aes_string(x="RIN",y="lcpm",col="Sex"))+
+   geom_point(size=4)
+  
+   ggplot(data=df_current,aes_string(x="RIN",y="lcpm",col="AD"))+
+   geom_point(size=4)
+   
+   ggplot(data=df_current,aes_string(x="RIN",y="lcpm",col="Braak"))+
+   geom_point(size=4)
+   
+   ggplot(data=df_current,aes_string(x="RIN",y="lcpm",col="PMI"))+
+   geom_point(size=4)
+   
+ 
+```
+
+### Regress out effects from coviants
+
+```{r}
+
+#Test residues
+lm_fit <- lm(lcpm ~ RIN+Batch, data=df_current)
+df_current$residual <- resid(lm_fit)
+df_current$fitted <- fitted(lm_fit)
+
+
+summary(lm_fit)
+
+{
+  pdf("Fig1/residual_test.pdf",width=12,height=12)
+plot(resid(lm_fit) ~ fitted(lm_fit),#
+main="Residual plot (ND1,Residual to Fitted,RIN+Batch)")
+abline(h=0)
+dev.off()
+}
+
+  ggplot(data=df_current,aes_string(x="fitted",y="residual",col="AD"))+
+   geom_point(size=4)
+  {
+    plot(density(df_current$fitted[df_current$AD=="NCI"]),col="green")
+    lines(density(df_current$fitted[df_current$AD=="MCI"]),col="blue")
+    lines(density(df_current$fitted[df_current$AD=="AD"]),col="red")
+   }
+  
+  
+  {
+    plot(density(df_current$fitted[df_current$Braak %in% c(1,2) & df_current$AD == "AD" ]) ,col="green")
+    lines(density(df_current$fitted[df_current$Braak %in% c(3,4) & df_current$AD == "AD"] ) ,col="blue")
+    lines(density(df_current$fitted[df_current$Braak %in% c(5,6) & df_current$AD == "AD"] ) ,col="red")
+  }
+  
+  {
+    plot(density(df_current$fitted[df_current$AD=="NCI" &  df_current$Braak %in% c(5,6)]),col="green")
+    lines(density(df_current$fitted[df_current$AD=="MCI" & df_current$Braak %in% c(5,6)]),col="blue")
+    lines(density(df_current$fitted[df_current$AD=="AD" & df_current$Braak %in% c(5,6)]),col="red")
+  }
+  
+```
+
+
+
+
+```{r}
+df_current$Braak <- as.factor(df_current$Braak)
+  ggplot(data=df_current[df_current$RIN>=6.5 &df_current$AD=="AD" ,],aes_string(x="Braak",y="lcpm",col="AD"))+ #AD
+   geom_point()
+{
+  p1 <- ggplot(data=df_current[df_current$RIN>=0.5 &df_current$AD=="AD" ,],aes_string(x="Braak",y="lcpm",col="Sex"))+ #AD
+          ylim(11,16)+ #geom_point()+
+          #geom_boxplot(outlier.shape = NA) +
+          #geom_jitter(binaxis='y', stackdir='center',position=position_jitter(0.1),size=3)
+          geom_boxplot(aes(color=Sex), width=0.5,size=0.4,position=position_dodge((0.8)))+
+          geom_dotplot(aes(fill=Sex,color=Sex), trim=F,binaxis = "y",stackdir = "center",dotsize = 0.4,position = position_dodge(0.8))
+  p1
+  
+  p2 <- ggplot(data=df_current[df_current$RIN>=0.5 &df_current$AD=="MCI",],aes_string(x="Braak",y="lcpm",col="Sex"))+ #AD
+          ylim(11,16)+
+          geom_boxplot(aes(color=AD), width=0.5,size=0.4,position=position_dodge((0.8)))+
+          geom_dotplot(aes(fill=Sex,color=Sex), trim=F,binaxis = "y",stackdir = "center",dotsize = 0.4,position = position_dodge(0.8))
+  
+  
+  p3 <- ggplot(data=df_current[df_current$RIN>=0.5 &df_current$AD=="NCI",],aes_string(x="Braak",y="lcpm",col="Sex"))+ #AD
+          ylim(11,16)+
+          geom_boxplot(aes(color=Sex), width=0.5,size=0.4,position=position_dodge((0.8)))+
+          geom_dotplot(aes(fill=Sex,color=Sex), trim=F,binaxis = "y",stackdir = "center",dotsize = 0.4,position = position_dodge(0.8))
+  
+   }
+#library(cowplot)
+#install.packages("ggpubr")
+#library(ggpubr)
+  library(tidyverse)
+  {
+    #pdf("CYB_SexDifferenceBasedOnBraak.pdf")
+    ggarrange(p3, p2, p1 + rremove("x.text"), 
+          labels = c("NCI", "MCI", "AD"),
+          ncol =3, nrow = 1) %>% ggexport(filename = "ND1_SexDifferenceBasedOnBraak.png",width = 1440, height = 480)
+    #dev.off()
+  }
+  
+  sum(df_current$RIN>=6.5 & df_current$Sex=="M" & df_current$AD =="AD" & df_current$APOE =="APOE33")
+```
+
+
+
+```{r,eval=TRUE}
+y=x_ROSMAP
+lcpm_mds <- lcpm_x_ROSMAP
+covvarianceM <- model.matrix(~y$samples$pmi+y$samples$Batch+y$samples$RIN+y$samples$AOD2) #
+design_withoutFactors <- model.matrix(~y$samples$groupCom)
+
+
+colnames(design_withoutFactors) <- gsub("y\\$samples\\$", "", colnames(design_withoutFactors))
+head(design_withoutFactors)
+colnames(design_withoutFactors) <- gsub("apoe_genotype", "", colnames(design_withoutFactors))
+head(design_withoutFactors)
+colnames(design_withoutFactors) <- gsub("group", "", colnames(design_withoutFactors))
+head(design_withoutFactors)
+rownames(design_withoutFactors) <- rownames(y$samples)
+head(design_withoutFactors)
+lcpm_WithoutFactors <- removeBatchEffect(lcpm_mds,covariates=covvarianceM,design=design_withoutFactors) #lcpm_mds
+#save(lcpm_WithoutFactors,file="~/Dropbox/human/ROSMAP/RNASeq/lcpm_WithoutFactors_ROSMAP.Rdata")
+#save(y,file="~/Dropbox/human/ROSMAP/RNASeq/x_normalized_ROSMAP.Rdata")
+#Partial NA coefficients for 23365 probe(s)
+#genes_detected <- rownames(lcpm_WithoutFactors)
+for(i in 1:length(rownames(lcpm_WithoutFactors))){
+  if(sum(is.na(lcpm_WithoutFactors[i,])) > 0){
+    print(rownames(lcpm_WithoutFactors) [i])
+  }
+}
+
+
+if(FALSE){
+samples_tmp <- merge(y$samples,s2c4_ROSMAP_yshang,by.x="rna_id",by.y="rnaseq_id",all.x=TRUE)
+colnames(samples_tmp)
+samples_tmp <- samples_tmp[,c(1:15,21)]
+samples_tmp <- samples_tmp[match(y$samples$rna_id,samples_tmp$rna_id),]
+y$samples <- samples_tmp
+}
+```
+
+
+###Plot (fitted + residuals) with the variable again
+```{r}
+{
+  df_rest <- data.frame(sample = names(lcpm_WithoutFactors["ENSG00000198888",]),
+                        gene1 = lcpm_WithoutFactors["ENSG00000198888",],  #MT-ND1
+                        gene2 = lcpm_WithoutFactors["ENSG00000198727",],  #MT-CYB
+                        gene3 = lcpm_WithoutFactors["ENSG00000132535",]    
+  )
+  
+  df_rest$AOD <- x_ROSMAP$samples$AOD[match(df_rest$sample,rownames(x_ROSMAP$samples))]
+df_rest$AOD2 <- x_ROSMAP$samples$AOD2[match(df_rest$sample,rownames(x_ROSMAP$samples))]
+
+df_rest$AD <- x_ROSMAP$samples$groupCom[match(df_rest$sample,rownames(x_ROSMAP$samples))]
+df_rest$AD <- gsub("\\..*","",df_rest$AD)
+df_rest$RIN <- x_ROSMAP$samples$RIN[match(df_rest$sample,rownames(x_ROSMAP$samples))]
+df_rest$PMI <- x_ROSMAP$samples$pmi[match(df_rest$sample,rownames(x_ROSMAP$samples))]
+df_rest$Sex <- x_ROSMAP$samples$msex[match(df_rest$sample,rownames(x_ROSMAP$samples))]
+df_rest$Braak <- x_ROSMAP$samples$Braak[match(df_rest$sample,rownames(x_ROSMAP$samples))]
+df_rest$APOE <- x_ROSMAP$samples$apoe_genotype[match(df_rest$sample,rownames(x_ROSMAP$samples))]
+df_rest$Batch <- x_ROSMAP$samples$Batch[match(df_rest$sample,rownames(x_ROSMAP$samples))]
+  
+##Plot Fitted data with RIN and Batch
+{
+   p<- ggplot(data=df_rest,aes_string(x="RIN",y="gene1",col="Batch"))+
+      geom_point(size=4)+ylab("MT-ND1")
+    ggsave(p,filename = "Fig1/BatchRIN_afterVarRM.png",width = 7, height = 7)
+}
+
+##Plot MT-ND1 and MT-ND2
+lm_fit <- lm(gene1 ~ gene2, data=df_rest)
+p <- ggplotRegression(lm_fit) +
+                 xlab("MT-CYB") +
+                ylab("MT-ND1")
+p
+
+ggsave(p,filename = "Fig1/ND1 and CYB correlations(p < 2E-284).png",width = 3, height =3)
+    
+    
+##Plot MT-ND1 and NDUFA1
+lm_fit <- lm(gene1 ~ gene3, data=df_rest[df_rest$AD == "NCI",])
+p <- ggplotRegression(lm_fit) +
+                 xlab("DLG4") +
+                ylab("MT-ND1")
+p
+ggplot(data=df_rest,aes_string(x="gene3",y="gene1",col="Sex")) +
+  geom_point()
+ggsave(p,filename = "Fig1/ND1 and NDUFA1 correlations.png",width = 3, height =3)
+
+##Plot MT-ND1 with AD
+df_rest$AD <- factor(df_rest$AD,levels =c("NCI","MCI","AD"))
+if(FALSE){
+    png("Fig1/MT-ND1 density map after regression.png",width=1280,height=1024)
+    plot(density(df_rest$gene1[df_rest$AD=="NCI"]),col="green",main="MT-ND1")
+    #lines(density(df_rest$gene1[df_rest$AD=="NCI"]),col="green")
+    lines(density(df_rest$gene1[df_rest$AD=="MCI"]),col="blue")
+    lines(density(df_rest$gene1[df_rest$AD=="AD"]),col="red")
+    dev.off()
+  }
+
+  p <- ggplot(df_rest,aes(x=gene1,col=AD))  +scale_colour_manual(values = c("green", "blue", "red"))+
+    xlim(18,22)+xlab("lcpm (MT-ND1)") + geom_line(stat="density")+ggtitle("MT-ND1 expression density")+
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.position = c(0.8, 0.8),plot.title = element_text(hjust = 0.5),legend.title=element_blank())
+  ggsave(p,filename = "Fig1/MT-ND1 density map after regression_AllInONE_AD.png",width = 5, height =3)
+  #+ labs(x = NULL) +
+     #opts(legend.position = "none") + opts(title = "Densities from a kernel density estimator")
+  
+  
+  
+  ##Plot MT-ND1 with Braak stage
+  df_rest$Braak2 <- df_rest$Braak
+  
+  df_rest$Braak2[df_rest$Braak2 ==0 | df_rest$Braak2 ==1]="low"
+  df_rest$Braak2[df_rest$Braak2 ==2 | df_rest$Braak2 ==3 |df_rest$Braak2 ==4]="middle"
+  df_rest$Braak2[df_rest$Braak2 ==5 | df_rest$Braak2 ==6]="high"
+df_rest$Braak2 <- factor(df_rest$Braak2,levels=c("low","middle","high"))
+  p <- ggplot(df_rest,aes(x=gene1,col=Braak2))  +scale_colour_manual(values = c("green", "blue", "red"))+
+    xlim(18,22)+xlab("MT-ND1") + geom_line(stat="density")+ggtitle("MT-ND1 expression density vs BraakStage")+
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.position = c(0.8, 0.8),plot.title = element_text(hjust = 0.5),legend.title=element_blank())
+  ggsave(p,filename = "Fig1/MT-ND1 density map after regression_AllInONE_Braak.png",width = 5, height =3)
+
+    ##Plot MT-ND1 with Sex
+  p <- ggplot(df_rest,aes(x=gene1,col=Sex))  +scale_colour_manual(values = c("red", "green"))+
+    xlim(18,22)+xlab("MT-ND1") + geom_line(stat="density")+ggtitle("MT-ND1 expression density vs Sex")+
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.position = c(0.8, 0.8),plot.title = element_text(hjust = 0.5),legend.title=element_blank())
+  ggsave(p,filename = "Fig1/MT-ND1 density map after regression_AllInONE_Sex.png",width = 5, height =3)
+  
+      ##Plot MT-ND1 with APOE
+  p <- ggplot(df_rest,aes(x=gene1,col=APOE))  +scale_colour_manual(values = c("red","blue", "green"))+
+    xlim(18,22)+xlab("MT-ND1") + geom_line(stat="density")+ggtitle("MT-ND1 expression density vs Sex")+
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.position = c(0.8, 0.8),plot.title = element_text(hjust = 0.5),legend.title=element_blank())
+  ggsave(p,filename = "Fig1/MT-ND1 density map after regression_AllInONE_APOE.png",width = 5, height =3)
+  
+  ##Plot MT-ND1 with Sex.AD
+  df_rest$SexAD = paste0(df_rest$Sex,".",df_rest$AD)
+    p <- ggplot(df_rest,aes(x=gene1,col=SexAD))  + #scale_colour_manual(values = c("red","blue", "green"))+
+    xlim(18,22)+xlab("MT-ND1") + geom_line(stat="density")+ggtitle("MT-ND1 expression density vs Sex")+
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.position = c(0.8, 0.7),plot.title = element_text(hjust = 0.5),legend.title=element_blank())
+  ggsave(p,filename = "Fig1/MT-ND1 density map after regression_AllInONE_SexAD.png",width = 5, height =4)
+  
+  ##Plot Percentage change of NCI, MCI and AD vs MT-ND1
+  prior_AD <- sum(df_rest$AD == "AD")/length(df_rest$AD)
+  prior_MCI <- sum(df_rest$AD == "MCI")/length(df_rest$AD)
+  prior_NCI <- sum(df_rest$AD == "NCI")/length(df_rest$AD)
+  tmp_AD <- density(df_rest$gene1[df_rest$AD == "AD"])
+  tmp_NCI <- density(df_rest$gene1[df_rest$AD == "NCI"])
+  df_rest_tmp <- df_rest
+  
+  df_rest_tmp[order(df_rest_tmp$gene1),] -> df_rest_tmp
+  bin_size=100;lcpm_gene1=c();ratio_AD=c();ratio_MCI=c();ratio_NCI=c();
+  lcpm_set <- c()
+  current_count=0
+  current_AD=current_MCI=current_NCI=0
+  
+  for(i in 1:length(df_rest_tmp$sample)){
+    current_count <- current_count+1
+    lcpm_set <- c(lcpm_set, df_rest_tmp$gene1[i])
+    if(df_rest_tmp$AD[i] == "AD"){
+      current_AD <- current_AD +1
+    }else if(df_rest_tmp$AD[i] == "MCI"){
+      current_MCI <- current_MCI +1
+    }else{
+      current_NCI <- current_NCI+1
+    }
+    if(current_count ==bin_size){
+      lcpm_gene1 <- c(lcpm_gene1, mean(lcpm_set))
+      ratio_AD <- c(ratio_AD,current_AD/bin_size/prior_AD)
+      ratio_MCI <- c(ratio_MCI,current_MCI/bin_size/prior_MCI)
+      ratio_NCI <- c(ratio_NCI,current_NCI/bin_size/prior_NCI)
+      current_count=0;current_NCI=current_MCI=current_AD=0;
+      lcpm_set <- c();
+    }
+  }
+  ####After the loop, conclude the remaining
+  {
+    length(lcpm_set)
+    lcpm_gene1 <- c(lcpm_gene1, mean(lcpm_set))
+      ratio_AD <- c(ratio_AD,current_AD/bin_size/prior_AD)
+      ratio_MCI <- c(ratio_MCI,current_MCI/bin_size/prior_MCI)
+      ratio_NCI <- c(ratio_NCI,current_NCI/bin_size/prior_NCI)
+  }
+  df_percentage <- data.frame(gene1 = lcpm_gene1,NCI=ratio_NCI,MCI=ratio_MCI,AD=ratio_AD)
+  p <- ggplot(data=df_percentage)+xlab("MT-ND1(lcpm)")+ylab("relative ratio")+
+    geom_line(aes_string(x="gene1",y="NCI"),col="green")+
+     geom_line(aes_string(x="gene1",y="MCI"),col="blue")+
+     geom_line(aes_string(x="gene1",y="AD"),col="red")
+  ggsave(p,filename = "Fig1/AD percentage change with MT-ND1.png",width = 6, height =2)
+  
+  
+ 
+  
+  
+ggplot(data=df_rest,aes_string(x="AOD",y="gene1",col="AD"))+
+  geom_point(size=4)+ylab("MT-ND1")+
+  scale_colour_manual(values = c("green", "blue", "red"))
+
+ggplot(data=df_rest,aes_string(x="AD",y="gene1",col="AD"))+
+  geom_violin()+ylab("MT-ND1")+
+  scale_colour_manual(values = c("green", "blue", "red"))
+
+ggplot(data=df_rest)+
+  geom_freqpoly(aes(x = gene1,
+     y = ..density.., colour = AD))
+}
+```
+
+
+## plot MT-ND1 with cell marker genes
+```{r}
+#Neuron markers
+#RBFOX3, NeuN, nueron nuclear marker
+#ELAVL4, HuD, neuron specific gene splicing
+#ENO2, NSE, cell shape marker
+#MAP2,  cell shape marker
+#DLGAP1, synapse marker, synaptic activity
+#DLG4, synaptic scaffold
+#KCNH1, 
+#GRIA1~4, AMPA receptor
+#GRIN1
+
+#REST
+#PRNP
+#MIR124-2HG
+#TPPP p25alpha, oligodendrocyte marker
+#save(df_rest,file="~/Dropbox/human/ROSMAP/RNASeq/df_rest_ROSMAP.Rdata")
+gene_current <- "MFN2"  #"TUBA4A"
+gene_current_ENSG <- x_ROSMAP$genes[x_ROSMAP$genes$HGNC_SYMBOL == gene_current,"ENSEMBL"][1]
+df_rest$gene4 <- lcpm_WithoutFactors[gene_current_ENSG,df_rest$sample]
+#df_rest$gene5 <- lcpm_WithoutFactors[gene_current_ENSG,df_rest$sample]
+
+##Plot MT-ND1 and NDUFA1
+df_rest_filter <- df_rest  #[df_rest$AD == "NCI",]
+lm_fit <- lm(gene5 ~ gene4, data=df_rest_filter)
+p <- ggplotRegression(lm_fit) +
+                 xlab(gene_current) +
+                ylab("MT-ND1")
+p
+ggplot(data=df_rest,aes_string(x="gene4",y="gene5",col="AD")) +
+  geom_point()+theme(legend.position = "right")+xlab(gene_current)+scale_colour_manual(values = c("green", "blue", "red"))
+ggsave(p,filename = paste0("Fig1/ND1 and ",gene_current," correlations_ROSMAP.png"),width = 5, height =3)
+
+p
+p_density <- ggplot(df_rest,aes(x=gene4,col=AD))  +scale_colour_manual(values = c("green", "blue", "red"))+
+   xlab(gene_current) + geom_line(stat="density")+ggtitle("MT-ND1 expression density")+
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.position = c(0.8, 0.8),plot.title = element_text(hjust = 0.5),legend.title=element_blank())
+p_density
+ggsave(p_density,filename = paste0("Fig1/",gene_current," densityMap_Braak_ROSMAP.png"),width = 5, height =3)
+
+
+#Test REST and APP
+if(FALSE){
+  df_rest_filter <- df_rest#[df_rest$AD == "NCI",]
+lm_fit <- lm(gene5 ~ gene4, data=df_rest_filter)
+p <- ggplotRegression(lm_fit) +
+                 xlab(gene_current) +
+                ylab("APP")
+p
+
+ggplot(data=df_rest,aes_string(x="AOD",y="gene4",col="AD")) +
+  geom_point()+theme(legend.position = "right")+ylab(gene_current)
+
+}
+```
+
+## calculate all gene correlations to MT-ND1
+```{r}
+df_correlations <- data.frame(gene=c(),cor=c(),rsq=c(),pval=c())
+lcpm_ND1 <- lcpm_WithoutFactors["ENSG00000198888",]
+for(i in 1:length(lcpm_WithoutFactors[,1])){
+  lcpm_current <- lcpm_WithoutFactors[i,]
+  lm_current <- lm(lcpm_ND1 ~ lcpm_current)
+  gene_current <- rownames(lcpm_WithoutFactors)[i]
+  cor_current <- signif(lm_current$coef[2],digits = 5)
+  rsq_current <- signif(summary(lm_current)$adj.r.squared,digits = 5)
+  p_current <- signif(summary(lm_current)$coef[2,4],digits = 5)
+  df_current <- data.frame(gene=gene_current,cor=cor_current,rsq=rsq_current,pval=p_current)
+  df_correlations <- rbind(df_correlations, df_current)
+}
+df_correlations[order(df_correlations$rsq,decreasing = T),] -> df_correlations2
+rownames(df_correlations2) <- c(1:length(df_correlations2$gene))
+df_correlations2
+df_correlations2$gene_symbol <- x_ROSMAP$genes[match(df_correlations2$gene,x_ROSMAP$genes$ENSEMBL),]$HGNC_SYMBOL
+
+df_correlations2[,c("gene_symbol","gene", "cor", "rsq", "pval")] -> df_correlations2
+
+write.csv(df_correlations2,file=paste0("Fig1/correlations_ND1_ROSMAP.csv"))
+df_correlations2$pval[800]
+{
+plot(density(log(df_correlations2$pval)))
+abline(v=log(df_correlations2$pval[800]),col="red")
+}
+```
+
+##Heatmap of MT_genes
+```{r}
+library(scales)
+library(ComplexHeatmap)
+library(circlize)
+
+genes_heatmap <- c(MT_human,synapseMarkers)
+name_heatmap <- "MT_synapse" #"MT"
+MT_genes_ENSG <- x_ROSMAP$genes$ENSEMBL[match(genes_heatmap,x_ROSMAP$genes$HGNC_SYMBOL)]
+lcpm_WithoutFactors[MT_genes_ENSG,] -> MT_gene_expr
+rownames(MT_gene_expr) <- genes_heatmap
+
+##sort samples by eigen gene value of all MT genes
+complex_colors_MTgenes <- rep("grey",length(rownames(MT_gene_expr)))
+MEList_MTgenes <- moduleEigengenes((as.matrix(t(MT_gene_expr))), colors = complex_colors_MTgenes)
+sample_order_MTgenes <- order(MEList_MTgenes$eigengenes$MEgrey)
+names_sample <- rownames(MEList_MTgenes$eigengenes)
+##Scaling
+  base_mean_y = rowMeans(MT_gene_expr,na.rm = T)  #()
+  mat_scaled_y = t(apply(MT_gene_expr, 1, scale))
+  max_heat = max(mat_scaled_y)
+  min_heat = min(mat_scaled_y)
+  rownames(mat_scaled_y)->genes_heatmap
+  
+##set heatmap top labels
+  sample_orders <- sample_order_MTgenes
+  #type_apoe = s2c4_ROSMAP_filter2[names_order[sample_orders],"apoe_genotype"]
+  #ha_apoe = HeatmapAnnotation(df = data.frame(type = type_apoe),col=list(type = c("APOE34" =  "red", "APOE33" = "grey","APOE23" = "green")) )
+
+  #type_sex = s2c4_ROSMAP_filter2[names_order[sample_orders],"msex"]
+  #ha_sex = HeatmapAnnotation(df = data.frame(type = type_sex),col=list(type = c("M" =  "green", "F" = "red")) )
+  x_ROSMAP$samples
+  type_AD = x_ROSMAP$samples[names_sample[sample_orders],"group"]
+  ha_AD = HeatmapAnnotation(df = data.frame(type = type_AD),col=list(type = c("NCI" =  "green", "MCI"="blue","AD" = "red")) )
+
+  ha_y <- HeatmapAnnotation(df = data.frame(Diagnosis = type_AD),
+                  col=list(Diagnosis = c("AD" =  "purple", "MCI" = "orange","NCI" = "cyan")
+                           ) )
+
+  heatmap_all <- Heatmap( mat_scaled_y[,sample_orders], name = "expression", km = 1, 
+                          col = colorRamp2(c(min_heat*0.7, 0, max_heat*0.7), c(muted("blue"), "white", muted("red"))),
+                          cluster_columns = F,cluster_rows=F,
+                          top_annotation = ha_y, top_annotation_height = unit(4, "mm"), 
+                          show_row_names = FALSE, show_column_names = FALSE) +
+                          Heatmap(base_mean_y, name = "base_mean", show_row_names = T, row_names_gp = gpar(fontsize = 10), width = unit(5, "mm"),
+                                  col = colorRamp2(c(min(base_mean_y), max(base_mean_y)), c("green", "red")) )  #+
+  
+  #Save heatmap
+  {
+      pdf(paste0("Fig1/heatmap_",name_heatmap,"_orderedByEigenGenes_ROSMAP.pdf"), height=length(genes_heatmap)*0.25+6, width=12)
+      print(heatmap_all)
+      dev.off()
+   }
+```
+
+
+
+##generate MTlabel based on the expression level of MT-ND1
+```{r}
+if(FALSE){
+MT_genes <- c(complex1_human,complex2_human,complex3_human,complex4_human,complex5_human)   ##dplyr::select(contains("MT-"))    #startsWith("MT-")
+ETC_genes <- c(MT_genes[startsWith(MT_genes,"MT-")],MT_genes[!startsWith(MT_genes,"MT-")])
+MT_genes <- MT_genes[startsWith(MT_genes,"MT-")]
+MT_genes_ENSG <- dplyr::filter(x_ROSMAP$genes,x_ROSMAP$genes$HGNC_SYMBOL %in% MT_genes)
+MT_genes_ENSG <- MT_genes_ENSG$ENSEMBL
+}
+MT_genes_regulator <- c(MT_human,"TFAM","TFB1M","TFB2M","NRF1","NRF2")
+
+dplyr::filter(x_ROSMAP$genes,x_ROSMAP$genes$HGNC_SYMBOL=="MT-ND1")
+
+expr_currentGene <- lcpm_WithoutFactors["ENSG00000198888",]  #ENSG00000198888, MT-ND1
+{
+ plot(density(t(expr_currentGene)),main="MT-ND1",xlab("lcpm"))
+ abline(v=mean(t(expr_currentGene))+1.0*sd(t(expr_currentGene)),col="red")
+ abline(v=mean(t(expr_currentGene))-1.0*sd(t(expr_currentGene)),col="red")
+}
+
+{
+  p <- ggplot(df_rest,aes(x=gene1))  + #scale_colour_manual(values = c("red","blue", "green"))+
+    xlim(18,22)+xlab("lcpm (MT-ND1)") + geom_line(stat="density")+ggtitle("MT-ND1 expression density")+
+    geom_vline(xintercept = mean(df_rest$gene1)+1.0*sd(df_rest$gene1), col="red") +
+    geom_vline(xintercept = mean(df_rest$gene1)-1.0*sd(df_rest$gene1), col="red")
+    #geom_vline(xintercept = mean(gene1)) #theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.position = c(0.8, 0.8),plot.title = element_text(hjust = 0.5),legend.title=element_blank())
+  ggsave(p,filename = "Fig1/MT-ND1 density map MThighVslow.png",width = 4, height =3)
+}
+
+sum(expr_currentGene > mean(t(expr_currentGene))+1.0*sd(t(expr_currentGene)))  #63
+sum(expr_currentGene < mean(t(expr_currentGene)) - 1.0*sd(t(expr_currentGene)))  #76
+x_ROSMAP$samples$MTlabel="middle"
+tip_high <- rownames(x_ROSMAP$samples) %in% names(expr_currentGene)[expr_currentGene > mean(t(expr_currentGene))+1.0*sd(t(expr_currentGene))]
+tip_low <- rownames(x_ROSMAP$samples) %in% names(expr_currentGene)[expr_currentGene < mean(t(expr_currentGene)) - 1.0*sd(t(expr_currentGene))]
+
+x_ROSMAP$samples$MTlabel[tip_high] <- "high"
+x_ROSMAP$samples$MTlabel[tip_low] <- "low"
+
+dplyr::filter(x_ROSMAP$genes,x_ROSMAP$genes$HGNC_SYMBOL %in% MT_genes)
+x_ROSMAP$samples$MTlabel
+```
+
+#DE analysis based on MT labels
+```{r}
+dim(x_ROSMAP)
+y=x_ROSMAP
+y$samples$Batch <- relevel(y$samples$Batch,"0")
+y$samples$apoe_genotype <- relevel(y$samples$apoe_genotype, "APOE33")
+y$samples$msex <- relevel(y$samples$msex,"M")
+y$samples$group <- relevel(y$samples$group,"NCI")
+y$samples$MTlabel <- factor(y$samples$MTlabel,levels =c("low","middle","high"))
+y$samples$groupCom <- as.factor(y$samples$groupCom)
+y$samples$groupCom <- relevel(y$samples$groupCom,"NCI.M.APOE33")
+#design <- model.matrix(~y$samples$Batch+y$samples$pmi+y$samples$RIN+y$samples$AOD2+y$samples$MTlabel) #+y$samples$groupCom
+y$samples$MTlabel2 <- "middle"
+y$samples$MTlabel2[y$counts["ENSG00000198888",] <= 404274] <- "low"
+y$samples$MTlabel2[y$counts["ENSG00000198888",] >= 692725] <- "high"
+
+y$samples$MTlabel3 <- "high"
+y$samples$MTlabel3[y$counts["ENSG00000198888",] <= 533236] <- "low"
+#y$samples$MTlabel3[y$counts["ENSG00000198888",] >= 692725] <- "high"
+
+y$counts["ENSG00000198888",]
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#  29592  404274  533236  582620  692725 1863163 
+design <- model.matrix(~y$samples$Batch+y$samples$pmi+y$samples$RIN+y$samples$AOD2+y$samples$MTlabel3:y$samples$group) #+y$samples$groupCom
+colnames(design) <- gsub("y\\$samples\\$", "", colnames(design))
+head(design)
+colnames(design) <- gsub("apoe_genotype", "", colnames(design))
+head(design)
+colnames(design) <- gsub("group", "", colnames(design))
+head(design)
+colnames(design) <- gsub("Com", "", colnames(design))
+head(design)
+colnames(design) <- gsub("MTlabel", "MT", colnames(design))
+head(design)
+colnames(design) <- gsub(":", "_", colnames(design))
+
+rownames(design) <- rownames(y$samples)
+if(colnames(design)[1] == "(Intercept)"){
+  colnames(design)[1] <- "Intercept"
+}
+head(design)
+
+```
+##Contrast
+```{r}
+colnames(design)
+diagnosis <- c("NCI","MCI","AD")
+sex <- c("F","M")
+apoe_genotype <- c("APOE33","APOE34","APOE23")
+
+if(FALSE){
+  contr.matrix<- makeContrasts(
+   ADvsNCI_F_APOE33 = AD.F.APOE33-NCI.F.APOE33, 
+   MCIvsNCI_F_APOE33 = MCI.F.APOE33 - NCI.F.APOE33, 
+   ADvsMCI_F_APOE33 = AD.F.APOE33 - MCI.F.APOE33, 
+   
+   ADvsNCI_F_APOE34 = AD.F.APOE34-NCI.F.APOE34, 
+   MCIvsNCI_F_APOE34 = MCI.F.APOE34 - NCI.F.APOE34, 
+   ADvsMCI_F_APOE34 = AD.F.APOE34 - MCI.F.APOE34,
+   
+   ADvsNCI_F_APOE23 = AD.F.APOE23-NCI.F.APOE23, 
+   MCIvsNCI_F_APOE23 = MCI.F.APOE23 - NCI.F.APOE23, 
+   ADvsMCI_F_APOE23 = AD.F.APOE23 - MCI.F.APOE23,
+   
+   ADvsNCI_M_APOE33 = AD.M.APOE33,   #-NCI.M.APOE33
+   MCIvsNCI_M_APOE33 = MCI.M.APOE33, #-NCI.M.APOE33
+   ADvsMCI_M_APOE33 = AD.M.APOE33 - MCI.M.APOE33, 
+   
+   ADvsNCI_M_APOE34 = AD.M.APOE34-NCI.M.APOE34, 
+   MCIvsNCI_M_APOE34 = MCI.M.APOE34 - NCI.M.APOE34, 
+   ADvsMCI_M_APOE34 = AD.M.APOE34 - MCI.M.APOE34,
+   
+   ADvsNCI_M_APOE23 = AD.M.APOE23-NCI.M.APOE23, 
+   MCIvsNCI_M_APOE23 = MCI.M.APOE23 - NCI.M.APOE23, 
+   ADvsMCI_M_APOE23 = AD.M.APOE23 - MCI.M.APOE23,
+   
+   
+   levels = colnames(design))
+}
+
+contr.matrix<- makeContrasts(
+   highvslow_MT = MThigh, 
+   levels = colnames(design))
+
+contr.matrix<- makeContrasts(
+   ADvsNCI = AD, 
+   levels = colnames(design))
+#AD MCI MTmiddle:AD MThigh:AD
+
+contr.matrix<- makeContrasts(
+   ADvsNCI_L = MT2low_AD-MT2low_NCI, #
+   ADvsNCI_M = MT2middle_AD-MT2middle_NCI,
+   ADvsNCI_H = MT2high_AD-MT2high_NCI,
+   levels = colnames(design))
+
+contr.matrix<- makeContrasts(
+   ADvsNCI_L = MT3low_AD-MT3low_NCI, #
+   ADvsNCI_H = MT3high_AD-MT3high_NCI,
+   levels = colnames(design))
+
+contr.matrix
+
+c(sum(design[,"MT2low_AD"]),sum(design[,"MT2low_NCI"])) #40,63
+c(sum(design[,"MT2middle_AD"]),sum(design[,"MT2middle_NCI"]))#126,89
+c(sum(design[,"MT2high_AD"]),sum(design[,"MT2high_NCI"])) # 68,41
+
+c(sum(design[,"MT3low_AD"]),sum(design[,"MT3low_NCI"])) #97 115
+c(sum(design[,"MT3high_AD"]),sum(design[,"MT3high_NCI"])) # 137  78
+```
+
+```{r,eval=TRUE}
+par(mfrow=c(1,2))
+v <- voom(y, design, plot=TRUE)
+dim(v)
+
+```
+
+
+```{r,eval=TRUE}
+vfit <- lmFit(v, design)
+vfit_contr <- contrasts.fit(vfit, contrasts=contr.matrix)
+#vfit_contr_APOE <- contrasts.fit(vfit, contrasts=contr.matrix_APOE)
+#vfit_contr_Gender <- contrasts.fit(vfit, contrasts=contr.matrix_Gender)
+
+efit <- eBayes(vfit_contr)
+#efit_APOE <- eBayes(vfit_contr_APOE)
+#efit_Gender <- eBayes(vfit_contr_Gender)
+```
+
+```{r}
+plotSA(efit, main="Final model: Mean−variance trend")
+
+```
+
+```{r}
+summary(decideTests(efit))
+
+```
+```{r}
+head(coef(efit))
+topTable(efit,number=15,coef="highvslow_MT",adjust.method = "BH")[,c(1,3,5:11)]
+topTable(efit,number=15,coef="ADvsNCI",adjust.method = "BH",confint=TRUE)[,c(1,3,7:13)]
+
+```
+
+#Save DEG the results
+```{r}
+#summary(decideTests(efit))
+topTable(efit,coef=1,number=Inf,sort.by="B",p.value=0.01, lfc=log2(1.1)) [1:5,] #coef=1
+comparisons <- colnames(summary(decideTests(efit)))
+
+for(i in 1:length(comparisons)){
+  current_compare <- comparisons[i]
+  currentDEGs <- topTable(efit,number=Inf,coef=current_compare,adjust.method = "BH",confint=TRUE)
+  write.csv(currentDEGs,file=paste0("Fig1/",current_compare,"_AD_mitoLevels2.csv"))
+}
+
+```
+
+#GO analysis
+```{r}
+DElist <- topTable(efit,coef=1,number=Inf,sort.by="B",p.value=0.01, lfc=log2(1.8)) #coef=1
+DElist[DElist$logFC>0,"ENSEMBL"] -> up_regulated_MT  #439
+length(up_regulated_MT)
+#up_regulated_MT[!up_regulated_MT %in% MT_genes_ENSG] -> up_regulated_MT
+DElist[DElist$logFC<0,"ENSEMBL"] -> down_regulated_MT #410
+length(down_regulated_MT)
+
+geneSets <- list(up=up_regulated_MT,down=down_regulated_MT)
+GO_types <- c("BP","MF","CC")    
+i=2
+for(i in 1:2){
+current_set <- geneSets[[i]]
+which.color <- names(geneSets[i])
+keytypes(org.Hs.eg.db)
+trait_allGenes_entrez <- mapIds(org.Hs.eg.db,
+                     keys=current_set,
+                     column="ENTREZID", #ENSEMBL
+                     keytype="ENSEMBL", #SYMBOL
+                     multiVals="first")
+     trait_allGenes_entrez[!is.na(trait_allGenes_entrez)] -> trait_allGenes_entrez
+     
+     j=3
+     for(j in 1:3){
+       GO_type = GO_types[j]
+       ego_allgene <- enrichGO(gene          = trait_allGenes_entrez,
+                # universe      = names(geneList),
+                OrgDb         = org.Hs.eg.db,
+                ont           = GO_type,  #BP, MF (Molecular Function), CC (Cellular Components) 
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.1,
+                qvalueCutoff  = 0.1,
+                readable      = TRUE)
+       length_positive <- length(as.data.frame(ego_allgene)[,1])
+       if(length_positive >=1){
+          GO_BP <- as.data.frame(ego_allgene)
+          write.xlsx(GO_BP,paste0("Fig1/",which.color,"_AllgeneGO",length(trait_allGenes_entrez),"_genes_GO_",GO_type,"_ROSMAP_MT.xlsx"))
+          cnetplot <- cnetplot(ego_allgene,showCategory = 5)
+          ggsave(filename=paste0("Fig1/",which.color,"_cnetplot_",GO_type,"_ROSMAP_MT.png"),cnetplot,width=8,height=4,dpi=300)
+          dot_plot <- dotplot(ego_allgene,showCategory = 10)
+          ggsave(filename=paste0("Fig1/",which.color,"_dotPlot_",GO_type,"_ROSMAP_MT_top10_2.png"),dot_plot,width=7,height=5,dpi=300)
+          dot_plot2 <- dotplot(ego_allgene,showCategory = min(30,length_positive))
+          ggsave(filename=paste0("Fig1/",which.color,"_dotPlot_",GO_type,"_ROSMAP_MT.png"),dot_plot2,width=10,height=ceiling(min(30,length_positive)/2),dpi=300)
+       }
+        cat(paste0(which.color,"\t",GO_type,"\t","All","\n"))
+     }
+}
+
+
+#For up_MT genes, remove Mito part
+up_regulated_MT[!up_regulated_MT %in% MT_genes_ENSG] -> up_regulated_MT2
+{
+  current_set <- up_regulated_MT2
+which.color <- "up_regulated_MT_removeMT"
+keytypes(org.Hs.eg.db)
+trait_allGenes_entrez <- mapIds(org.Hs.eg.db,
+                     keys=current_set,
+                     column="ENTREZID", #ENSEMBL
+                     keytype="ENSEMBL", #SYMBOL
+                     multiVals="first")
+     trait_allGenes_entrez[!is.na(trait_allGenes_entrez)] -> trait_allGenes_entrez
+     
+     j=3
+     for(j in 1:3){
+       GO_type = GO_types[j]
+       ego_allgene <- enrichGO(gene          = trait_allGenes_entrez,
+                # universe      = names(geneList),
+                OrgDb         = org.Hs.eg.db,
+                ont           = GO_type,  #BP, MF (Molecular Function), CC (Cellular Components) 
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.1,
+                qvalueCutoff  = 0.4,
+                readable      = TRUE)
+       length_positive <- length(as.data.frame(ego_allgene)[,1])
+       if(length_positive >=1){
+          GO_BP <- as.data.frame(ego_allgene)
+          write.xlsx(GO_BP,paste0("Fig1/",which.color,"_AllgeneGO",length(trait_allGenes_entrez),"_genes_GO_",GO_type,"_ROSMAP_MT_removeMT.xlsx"))
+          cnetplot <- cnetplot(ego_allgene,showCategory = 5)
+          ggsave(filename=paste0("Fig1/",which.color,"_cnetplot_",GO_type,"_ROSMAP_MT_removeMT.png"),cnetplot,width=8,height=4,dpi=300)
+          dot_plot <- dotplot(ego_allgene,showCategory = 10)
+          ggsave(filename=paste0("Fig1/",which.color,"_dotPlot_",GO_type,"_ROSMAP_MT_top10_removeMT.png"),dot_plot,width=10,height=5,dpi=300)
+          dot_plot2 <- dotplot(ego_allgene,showCategory = min(30,length_positive))
+          ggsave(filename=paste0("Fig1/",which.color,"_dotPlot_",GO_type,"_ROSMAP_MT_removeMT.png"),dot_plot2,width=10,height=ceiling(min(30,length_positive)/2),dpi=300)
+       }
+        cat(paste0(which.color,"\t",GO_type,"\t","All","\n"))
+     }
+}
+```
+
+
+#Camera analysis
+
+```{r}
+##Read GMT
+#c5.all.v7.0.entrez.gmt  #GO
+#c2.all.v7.0.entrez.gmt  #KEGG
+#c1.all.v7.0.entrez.gmt  #position
+#c3.all.v7.0.entrez      #motif genesets
+current_set <- "c3.all.v7.0.entrez"
+gmt_file <- paste0("~/Dropbox/RaymondTools/GSEA/gmt/",current_set,".gmt")
+gmt <- read_lines(gmt_file)
+str(gmt)
+n_gmt <-0
+current_gmt_total <- list()
+for(currentLine in gmt){
+  tmp_gmt <- strsplit(currentLine,split="\t")
+  tmp_gmt <- tmp_gmt[[1]]
+  n_gmt <- n_gmt +1
+  current_gmt_total <- c(current_gmt_total, list(tmp_gmt[3:length(tmp_gmt)])  )  #list.append(Hs.C5.v7.0,d=tmp_gmt[3:length(tmp_gmt)])
+  names(current_gmt_total)[length(current_gmt_total)] <- tmp_gmt[1]
+}
+Hs.C3.v7.0 <- current_gmt_total
+save(Hs.C3.v7.0,file="~/Dropbox/RaymondTools/GSEA/human_c3.all.v7.0.rdata")
+
+
+
+#Hs.C2.v7.0
+#Hs.C5.v7.0
+#Hs.C1.v7.0
+Hs.C1.v7.0[[1]]
+Hs.C3.v7.0
+```
+
+```{r}
+library("xlsx")
+
+load("~/Dropbox/RaymondTools/GSEA/human_c5.all.v7.0.rdata") 
+idx_c5 <- ids2indices(Hs.C5.v7.0,id=v$genes$ENTREZID) 
+load("~/Dropbox/RaymondTools/GSEA/human_c2.all.v7.0.rdata") 
+idx_c2 <- ids2indices(Hs.C2.v7.0,id=v$genes$ENTREZID) 
+idx_c2_KEGG <- idx_c2[startsWith(names(idx_c2),"KEGG_")]
+load("~/Dropbox/RaymondTools/GSEA/human_c1.all.v7.0.rdata") 
+idx_c1 <- ids2indices(Hs.C1.v7.0,id=v$genes$ENTREZID) 
+#GO_MYELIN_SHEATH
+load("~/Dropbox/RaymondTools/GSEA/human_c3.all.v7.0.rdata") 
+idx_c3 <- ids2indices(Hs.C3.v7.0,id=v$genes$ENTREZID) 
+
+cam.MThigh_GO <- camera(v,idx_c5,design,contrast=contr.matrix[,1]) 
+head(cam.MThigh_GO,100)
+cam.MThigh_GO_down <- cam.MThigh_GO[cam.MThigh_GO$Direction=="Down",]
+cam.MThigh_GO_up <- cam.MThigh_GO[cam.MThigh_GO$Direction=="Up",]
+#Save camera result
+write.xlsx2(cam.MThigh_GO_down, file=paste0("Fig1/","GO_","camera.xlsx"), 
+                 sheetName="GO_down", row.names=TRUE)#current_compare
+write.xlsx2(cam.MThigh_GO_up, file=paste0("Fig1/","GO_","camera.xlsx"), 
+                 sheetName="GO_up", append=TRUE, row.names=TRUE)#current_compare
+
+
+
+cam.MThigh_KEGG <- camera(v,idx_c2_KEGG,design,contrast=contr.matrix[,1]) 
+head(cam.MThigh_KEGG,100)
+cam.MThigh_KEGG_down <- cam.MThigh_KEGG[cam.MThigh_KEGG$Direction=="Down",]
+cam.MThigh_KEGG_up <- cam.MThigh_KEGG[cam.MThigh_KEGG$Direction=="Up",]
+#Save camera result
+write.xlsx2(cam.MThigh_KEGG_down, file=paste0("Fig1/","KEGG_","camera.xlsx"), 
+                 sheetName="KEGG_down", row.names=TRUE)#current_compare
+write.xlsx2(cam.MThigh_KEGG_up, file=paste0("Fig1/","KEGG_","camera.xlsx"), 
+                 sheetName="KEGG_up", append=TRUE, row.names=TRUE)#current_compare
+
+
+camKEGG.MThigh_GenomePosition <- camera(v,idx_c1,design,contrast=contr.matrix[,1]) 
+head(camKEGG.MThigh_GenomePosition,100)
+camKEGG.MThigh_GenomePosition_down <- camKEGG.MThigh_GenomePosition[camKEGG.MThigh_GenomePosition$Direction=="Down",]
+camKEGG.MThigh_GenomePosition_up <- camKEGG.MThigh_GenomePosition[camKEGG.MThigh_GenomePosition$Direction=="Up",]
+#Save camera result
+write.xlsx2(camKEGG.MThigh_GenomePosition_down, file=paste0("Fig1/","GenomePosition_","camera.xlsx"), 
+                 sheetName="KEGG_down", row.names=TRUE)#current_compare
+write.xlsx2(camKEGG.MThigh_GenomePosition_up, file=paste0("Fig1/","GenomePosition_","camera.xlsx"), 
+                 sheetName="KEGG_up", append=TRUE, row.names=TRUE)#current_compare
+
+
+cam.MThigh_motif <- camera(v,idx_c3,design,contrast=contr.matrix[,1]) 
+head(cam.MThigh_motif,100)
+cam.MThigh_motif_down <- cam.MThigh_motif[cam.MThigh_motif$Direction=="Down",]
+cam.MThigh_motif_up <- cam.MThigh_motif[cam.MThigh_motif$Direction=="Up",]
+#Save camera result
+write.xlsx2(cam.MThigh_motif_down, file=paste0("Fig1/","Motif","camera.xlsx"), 
+                 sheetName="Motif_down", row.names=TRUE)#current_compare
+write.xlsx2(cam.MThigh_motif_up, file=paste0("Fig1/","Motif","camera.xlsx"), 
+                 sheetName="Motif_up", append=TRUE, row.names=TRUE)#current_compare
+
+```
+
+
+
+#Convert ENSG to gene symbols
+```{r}
+
+expr_ROSMAP <- data.frame(lcpm_WithoutFactors)
+ROSMAP_ids <- colnames(x_ROSMAP)
+{
+s2c4_ROSMAP <- s2c4_ROSMAP_yshang
+s2c4_ROSMAP$rnaseq_id <- paste0("X",s2c4_ROSMAP$rnaseq_id )
+ROSMAP_ids[(ROSMAP_ids %in% s2c4_ROSMAP$rnaseq_id )] -> ROSMAP_ids_filter
+ROSMAP_ids_filter[ROSMAP_ids_filter %in% colnames(expr_ROSMAP)] -> ROSMAP_ids_filter
+s2c4_ROSMAP <- s2c4_ROSMAP[s2c4_ROSMAP$rnaseq_id %in% ROSMAP_ids_filter,]
+# [1] "X01_120405"   "X150_120419"  "X164_120423"  "X20_120411"   "X218_120425"  "X266_120430"  "X276_120430"  "X411_120503"  "X448_120507"  "X451_120507"  "X517_120515" 
+#[12] "X665_120530"  "X674_120530"  "X700_120605"  "X492_120515"  "R24_131017"   "redo4_140501" "X892_130923" 
+expr_ROSMAP[,ROSMAP_ids_filter] ->expr_ROSMAP_filter
+head(expr_ROSMAP_filter)[1:5,1:5]
+ENSGs <- rownames(expr_ROSMAP_filter)
+
+
+ENSGs_symbol <- mapIds(org.Hs.eg.db,
+                     keys=ENSGs,
+                     column="SYMBOL", #ENSEMBL
+                     keytype="ENSEMBL", #SYMBOL
+                     multiVals="first")
+
+expr_ROSMAP_filter[ENSGs[!is.na(ENSGs_symbol)],] -> expr_ROSMAP_filter2
+
+head(expr_ROSMAP_filter2)
+##  'select()' returned 1:many mapping between keys and columns
+ENSGs[!is.na(ENSGs_symbol)] -> ENSGs2
+ENSGs_symbol2 <- mapIds(org.Hs.eg.db,
+                     keys=ENSGs2,
+                     column="SYMBOL", #ENSEMBL
+                     keytype="ENSEMBL", #SYMBOL
+                     multiVals="first")
+ENSGs2[!duplicated(ENSGs_symbol2)] -> ENSGs2
+expr_ROSMAP_filter2[ENSGs2,] -> expr_ROSMAP_filter2
+ENSGs_symbol2 <- mapIds(org.Hs.eg.db,
+                     keys=ENSGs2,
+                     column="SYMBOL", #ENSEMBL
+                     keytype="ENSEMBL", #SYMBOL
+                     multiVals="first")
+rownames(expr_ROSMAP_filter2) <- ENSGs_symbol2
+
+head(expr_ROSMAP_filter2)[1:5,1:5]
+
+colnames(expr_ROSMAP_filter2)[1:4]
+length(s2c4_ROSMAP$rnaseq_id) - length(colnames(expr_ROSMAP_filter2))
+unique(s2c4_ROSMAP$msex)  #"F" "M"
+unique(s2c4_ROSMAP$apoe_genotype) #"APOE24" "APOE33" "APOE23" "APOE34" "APOE22" "APOE44"
+unique(s2c4_ROSMAP$cogdx)      # 4 1 2 5 3
+unique(s2c4_ROSMAP$AD)         #"AD"  "NCI" "MCI"
+
+s2c4_ROSMAP_filter <- s2c4_ROSMAP[s2c4_ROSMAP$apoe_genotype %in% c("APOE33","APOE23","APOE34"),]
+s2c4_ROSMAP_filter$condition <- paste(s2c4_ROSMAP_filter$AD,s2c4_ROSMAP_filter$msex,s2c4_ROSMAP_filter$apoe_genotype,sep=".")
+unique(s2c4_ROSMAP_filter$condition)
+condition_order <- c("NCI.M.APOE23","NCI.M.APOE33","NCI.M.APOE34",
+                     "NCI.F.APOE23","NCI.F.APOE33","NCI.F.APOE34",
+                     "MCI.M.APOE23","MCI.M.APOE33","MCI.M.APOE34",
+                     "MCI.F.APOE23","MCI.F.APOE33","MCI.F.APOE34",
+                     "AD.M.APOE23", "AD.M.APOE33", "AD.M.APOE34",
+                     "AD.F.APOE23", "AD.F.APOE33", "AD.F.APOE34"
+                      )
+s2c4_ROSMAP_filter$condition <- factor(s2c4_ROSMAP_filter$condition, levels =condition_order)
+s2c4_ROSMAP_filter$rnaseq_id[order(s2c4_ROSMAP_filter$condition)] -> sample_ordered
+
+expr_ROSMAP_filter2[,sample_ordered] -> expr_ROSMAP_filter3
+head(expr_ROSMAP_filter3)[1:5,1:5]
+length(colnames(expr_ROSMAP_filter2))
+length(colnames(expr_ROSMAP_filter3))
+length(s2c4_ROSMAP_filter$rnaseq_id)
+lapply(expr_ROSMAP_filter3,as.numeric,2) -> expr_ROSMAP_filter4
+data.frame(expr_ROSMAP_filter4,check.names = F) -> expr_ROSMAP_filter4
+rownames(expr_ROSMAP_filter4) <- rownames(expr_ROSMAP_filter3)
+#s2c4_ROSMAP_filter
+#expr_ROSMAP_filter4
+str(expr_ROSMAP_filter4[1:5,1:5])
+}
+```
+
+##convert unmapped symbols
+```{r}
+
+test_symbol <- complex5_human
+test_ENTREZID <- mapIds(org.Hs.eg.db,
+                     keys=test_symbol,
+                     column="ENTREZID", #ENSEMBL,ENTREZID
+                     keytype="SYMBOL", #SYMBOL
+                     multiVals="first")
+
+test_symbol[is.na(test_ENTREZID)]
+outliers_human_old <- c("MT-ND1","MT-ND2","MT-ND3", "MT-ND4","MT-ND4L", "MT-ND5","MT-ND6","MT-CYB","MT-CO1", "MT-CO2", "MT-CO3","MT-ATP6", "MT-ATP8")
+outliers_human_new <- c("ND1","ND2" ,"ND3","ND4","ND4L","ND5","ND6","CYTB","COX1","COX2","COX3","ATP6","ATP8")
+
+ mapIds(org.Hs.eg.db,
+                     keys=outliers_human_new,
+                     column="ENTREZID", #ENSEMBL,ENTREZID
+                     keytype="SYMBOL", #SYMBOL
+                     multiVals="first")
+```
+
+
+
+
+```{r}
+allgenes_detected <- rownames(expr_ROSMAP_filter4)
+for(i in 1:length(outliers_human_new)){
+  allgenes_detected <- gsub(outliers_human_new[i],outliers_human_old[i],allgenes_detected)
+}
+
+allgenes_detected <- gsub("MT-MT-ND4L","MT-ND4L",allgenes_detected)
+
+rownames(expr_ROSMAP_filter4) <- allgenes_detected
+allgenes_detected[startsWith(allgenes_detected,"MT-")]
+samples_all <- colnames(expr_ROSMAP_filter4)
+s2c4_ROSMAP_filter2 <- s2c4_ROSMAP_filter
+rownames(s2c4_ROSMAP_filter2) <- s2c4_ROSMAP_filter2$rnaseq_id
+s2c4_ROSMAP_filter2[samples_all,] -> s2c4_ROSMAP_filter2
+#s2c4_ROSMAP_filter2 
+#expr_ROSMAP_filter4
+```
+
+##plot heatmap
+```{r}
+xpand <- function(d) do.call("expand.grid", rep(list(1:nrow(d)), 2))
+euc_norm <- function(x) sqrt(sum(x^2))
+euc_dist <- function(mat, weights=1) {
+  iter <- xpand(mat)
+  vec <- mapply(function(i,j) euc_norm(weights*(mat[i,] - mat[j,])), 
+                iter[,1], iter[,2])
+  matrix(vec,nrow(mat), nrow(mat))
+}
+```
+
+```{r}
+library(scales)
+library(ComplexHeatmap)
+library(circlize)
+
+allgenes_detected_ROSMAP <- rownames(expr_ROSMAP_filter4)
+sample_order <- s2c4_ROSMAP_filter2$rnaseq_id
+
+genes_detected_ROSMAP <- rownames(expr_ROSMAP_filter4)
+
+MT_genes <- c(complex1_human,complex2_human,complex3_human,complex4_human,complex5_human)   ##dplyr::select(contains("MT-"))    #startsWith("MT-")
+ETC_genes <- c(MT_genes[startsWith(MT_genes,"MT-")],MT_genes[!startsWith(MT_genes,"MT-")])
+MT_genes <- MT_genes[startsWith(MT_genes,"MT-")]
+#MT_genes_regulator <- c(MT_genes,"TFAM","TFB1M","TFB2M","NRF1","NRF2")
+
+MT_genes_regulator <- c(MT_genes,"TFAM","TFB1M","TFB2M","NRF1","NRF2","DLG4","DLGAP1","SYNGAP1","SHANK1","SHANK2","SHANK3")
+
+MT_genes_MTfusion <- c(MT_genes,"DNM1L","MFN2","MFN1","OPA1","DLGAP1","KCNH1","GRIN2A","GRIN2B","LRRTM3","GRIA1","GRIA2","GRIA3","GRIA4")
+
+MT_genes_CellType <- c(MT_genes,"NRGN","GAD1","AQP4","MBP","CSF1R","CD74","VCAN","FLT1","AMBP","DLGAP1","KCNH1","GRIN2A","GRIN2B")
+
+
+complexes <- list(complex1 =complex1_human, complex2=complex2_human, complex3=complex3_human, 
+                  complex4=complex4_human,complex5=complex5_human,complex_MT=MT_genes,
+                  complex_ETC=ETC_genes,complex_MT_regulator = MT_genes_regulator,
+                  MT_genes_MTfusion=MT_genes_MTfusion,
+                  MT_genes_CellType=MT_genes_CellType)
+
+
+#sort samples by eigen gene value of all MT genes
+expr_ROSMAP_filter4[MT_genes,] -> expr_ROSMAP_MTgenes
+complex_colors_MTgenes <- rep("grey",length(rownames(expr_ROSMAP_MTgenes)))
+MEList_MTgenes <- moduleEigengenes((as.matrix(t(expr_ROSMAP_MTgenes))), colors = complex_colors_MTgenes)
+sample_order_MTgenes <- order(MEList_MTgenes$eigengenes$MEgrey)
+
+complex_select <- complex5_human
+complex_select_name <- "complex5_human_ROSMAP_Reseq"
+
+complex_select <- ETC_genes
+complex_select_name <- "ETCgenes_human_ROSMAP_Reseq"
+
+complex_select <- MT_genes
+complex_select_name <- "MTgenes_human_ROSMAP_Reseq"
+
+complex_select <- MT_genes_regulator
+complex_select_name <- "MTgenesRegulator_human_ROSMAP_Reseq_CovarRemove"
+
+order_MTgenes = TRUE
+row_cluster= FALSE#TRUE
+i=1
+
+
+for(i in 1:length(complexes)){
+  complex_select_name=names(complexes[i])
+  complex_select <- complexes[[i]]
+  row_select <- which(genes_detected_ROSMAP %in% complex_select)
+  complex_select_filter <- genes_detected_ROSMAP[row_select]
+  complex_select[complex_select %in% complex_select_filter] -> complex_select_filter
+  col_select <- which(s2c4_ROSMAP_filter2$AD %in% c("NCI","MCI","AD") )  #& s2c_expr$msex %in% "F"
+  mat_y <- expr_ROSMAP_filter4[row_select,col_select]#lcpm_mds[row_select,]  #v$E[row_select,]
+  colnames(mat_y) -> names_tmp
+
+  names_order <- names_tmp  #c(c1,c2,c3)
+  mat_y[complex_select_filter,names_order] -> mat_y
+  
+  base_mean_y = rowMeans(mat_y,na.rm = T)  #()
+  mat_scaled_y = t(apply(mat_y, 1, scale))
+  max_heat = max(mat_scaled_y)
+  min_heat = min(mat_scaled_y)
+  rownames(mat_scaled_y)->gene_names
+  
+  #cluster by weighted distance
+  if(!order_MTgenes){
+    n_MT = sum(startsWith(gene_names,"MT-"))
+    n_nuc = length(gene_names)-n_MT
+    weight <- c(rep(n_nuc,n_MT),rep(n_MT,n_nuc))#complex4
+    if(n_MT==0 | n_nuc==0){
+        weight=1
+    }
+    sampledist_weighted <- euc_dist(mat=t(mat_scaled_y[,]), weights=weight)  #1
+    sampledist_weighted
+    cluster_samples <- hclust(as.dist(sampledist_weighted),method = "complete") #average  complete
+    sample_orders <- cluster_samples$order
+  }else{
+    sample_orders <- sample_order_MTgenes
+  }
+
+  #set heatmap top labels
+  type_apoe = s2c4_ROSMAP_filter2[names_order[sample_orders],"apoe_genotype"]
+  ha_apoe = HeatmapAnnotation(df = data.frame(type = type_apoe),col=list(type = c("APOE34" =  "red", "APOE33" = "grey","APOE23" = "green")) )
+
+  type_sex = s2c4_ROSMAP_filter2[names_order[sample_orders],"msex"]
+  ha_sex = HeatmapAnnotation(df = data.frame(type = type_sex),col=list(type = c("M" =  "green", "F" = "red")) )
+
+  type_AD = s2c4_ROSMAP_filter2[names_order[sample_orders],"AD"]
+  ha_AD = HeatmapAnnotation(df = data.frame(type = type_AD),col=list(type = c("NCI" =  "green", "MCI"="white","AD" = "red")) )
+
+  ha_y <- HeatmapAnnotation(df = data.frame(Diagnosis = type_AD,Sex=type_sex,APOE=type_apoe),
+                  col=list(Diagnosis = c("AD" =  "purple", "MCI" = "orange","NCI" = "cyan"),
+                           Sex = c("F" =  "green", "M" = "blue"),
+                           APOE= c("APOE33" =  "grey", "APOE23" = "pink","APOE34" = "magenta")) )
+
+  heatmap_all <- Heatmap( mat_scaled_y[,sample_orders], name = "expression(Scaled)", km = 1, 
+                          col = colorRamp2(c(min_heat*0.7, 0, max_heat*0.7), c(muted("blue"), "white", muted("red"))),
+                          cluster_columns = !(order_MTgenes),cluster_rows=row_cluster,
+                          top_annotation = ha_y, top_annotation_height = unit(4, "mm"), 
+                          show_row_names = FALSE, show_column_names = FALSE) +
+                          Heatmap(base_mean_y, name = "base_mean", show_row_names = T, row_names_gp = gpar(fontsize = 10), width = unit(5, "mm"),
+                                  col = colorRamp2(c(min(base_mean_y), 0, max(base_mean_y)), c("green", "white", "red")) )  #+
+
+  #heatmap_all
+  if(order_MTgenes){
+      pdf(paste0("~/Dropbox/human/RNAResequence/ROSMAP/heatmap/heatmap_","MT_genes_order_",ifelse(row_cluster,"Row","NoRow"),"_Clustering_",complex_select_name,"yshang.pdf"), height=length(complex_select_filter)*0.25+6, width=15)
+      print(heatmap_all)
+      dev.off()
+  }else{
+      pdf(paste0("~/Dropbox/human/RNAResequence/ROSMAP/heatmap/heatmap_","weightedCol_",ifelse(row_cluster,"Row","NoRow"),"_Clustering_",complex_select_name,"yshang.pdf"), height=length(complex_select_filter)*0.25+6, width=15)
+      print(heatmap_all)
+      dev.off()
+  }
+}
+
+
+
+```
+
+
+
+###Gene-trait relationships 
+  Row is module，Collumn is trait。correlation coefficient and pvalues are show in the squares
+  
+```{r}
+#RINcontinuous,pmi,age_death,educ,braaksc,cogdx,ceradsc,Batch
+x_lab="RINcontinuous"
+trail_current <- s2c4_ROSMAP_filter2[names(expr_currentGene),x_lab]
+trail_current2 <- trail_current^2
+str(t(expr_currentGene))
+expr_currentGene2 <- (expr_currentGene)
+#expr_currentGene2 <- expr_currentGene2[,1]
+str(expr_currentGene2)
+str(trail_current)
+cor(expr_currentGene2, trail_current)
+plot(x=trail_current,y=expr_currentGene2,xlab=x_lab,ylab="MT-ND1")
+lm.fit <- lm(expr_currentGene2~trail_current)
+summary(lm.fit)
+
+residuals_gene <- lm.fit$residuals
+{
+par(mfrow=c(1, 2))
+plot(x=c(1:588),y=expr_currentGene2[sample_orders],main="Normalized_lcpm")
+plot(x=c(1:588),y=residuals_gene[sample_orders],main="Residuals")
+}
+plot(x=trail_current,y=residuals_gene,xlab=x_lab,ylab="MT-ND1",main="residual")
+
+summary(lm(residuals_gene~trail_current))
+```
+  
+```{r}
+trail_selected <- c("RINcontinuous","pmi","age_death","educ","braaksc","cogdx","ceradsc","Batch")
+expr_currentSet <- expr_ROSMAP_filter4[MT_genes,]
+
+trail_currentSet <- s2c4_ROSMAP_filter2[names(expr_currentGene),trail_selected]
+
+
+nSamples=length(trail_currentSet$RINcontinuous)
+moduleTraitCor_noFP <- cor( t(expr_currentSet), trail_currentSet, use = "p");
+moduleTraitPvalue_noFP = corPvalueStudent(moduleTraitCor_noFP, nSamples); 
+textMatrix_noFP <- paste(signif(moduleTraitCor_noFP, 2), "\n(", signif(moduleTraitPvalue_noFP, 1), ")", sep = ""); 
+{
+pdf(file="MTgene-trait relationships_ROSMAP_CovarRemove.pdf",width=8,height=8)
+par(mar = c(4.5, 8.5, 2, 2)); 
+labeledHeatmap(Matrix = moduleTraitCor_noFP, 
+               xLabels = colnames(trail_currentSet), 
+               yLabels = rownames(expr_currentSet), 
+               ySymbols = rownames(expr_currentSet), 
+               colorLabels = FALSE, 
+               colors = blueWhiteRed(50), 
+               textMatrix = textMatrix_noFP,
+               setStdMargins = FALSE, 
+               cex.text = 0.65, 
+               zlim = c(-1,1), 
+               main = paste("Gene-trait relationships")) 
+
+dev.off()
+}
+```
+
+##Remove multiple factors effect and plot again
+
+
+###Plot
+```{r}
+#RINcontinuous,pmi,age_death,educ,braaksc,cogdx,ceradsc,Batch
+expr_currentGene <- lcpm_WithoutFactors["ENSG00000198888",] #MT-ND1
+expr_currentGene <- expr_currentGene[names(expr_currentGene) %in% s2c4_ROSMAP_filter2$rnaseq_id]
+x_lab="RINcontinuous"
+trail_current <- s2c4_ROSMAP_filter2[names(expr_currentGene),x_lab]
+trail_current2 <- trail_current^2
+str(t(expr_currentGene))
+expr_currentGene2 <- (expr_currentGene)
+#expr_currentGene2 <- expr_currentGene2[,1]
+str(expr_currentGene2)
+str(trail_current)
+cor(expr_currentGene2, trail_current)
+plot(x=trail_current,y=expr_currentGene2,xlab=x_lab,ylab="MT-ND1")
+lm.fit <- lm(expr_currentGene2~trail_current)
+summary(lm.fit)
+
+residuals_gene <- lm.fit$residuals
+{
+par(mfrow=c(1, 2))
+plot(x=c(1:length(expr_currentGene2)),y=expr_currentGene2[sample_orders],main="Normalized_lcpm")
+plot(x=c(1:588),y=residuals_gene[sample_orders],main="Residuals")
+}
+plot(x=trail_current,y=residuals_gene,xlab=x_lab,ylab="MT-ND1",main="residual")
+
+summary(lm(residuals_gene~trail_current))
+```
+
