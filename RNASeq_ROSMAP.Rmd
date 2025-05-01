@@ -9,6 +9,8 @@ knitr::opts_chunk$set(echo = TRUE)
 #install.packages(c("dynamicTreeCut", "cluster", "flashClust", "Hmisc", "reshape", "foreach", "doParallel") ) 
 #source("http://bioconductor.org/biocLite.R") 
 #biocLite("WGCNA")
+library(ggplot2)
+
 library(WGCNA)
 library(cluster)
 library(flashClust)
@@ -16,13 +18,11 @@ library("readxl")
 library("openxlsx")
 library(clusterProfiler)
 library(org.Hs.eg.db)
-library(org.Rn.eg.db)
-library(ggplot2)
+#library(org.Rn.eg.db)
 library(venn)
 library(tidyverse)
 library(limma)
 library("edgeR")
-library(org.Hs.eg.db)
 
 options(stringsAsFactors = FALSE)
 #theme_set(theme_bw())
@@ -30,8 +30,9 @@ theme_set(theme_bw()) + theme_update(panel.grid.major = element_blank(), panel.g
 ```
 
 ```{r}
-rm(list=ls())
+#rm(list=ls())
 keytypes(org.Hs.eg.db)
+
 ```
 
 ```{r}
