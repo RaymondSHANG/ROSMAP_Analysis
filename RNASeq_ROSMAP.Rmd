@@ -180,6 +180,7 @@ table(s2c$age_death)
 table(s2c$tissue)
 table(s2c$race)
 
+table(s2c[,c("diagnosis","sex","apoe4_allele")])
 # Filter data
 # race == 1
 # RIN >=5
@@ -197,32 +198,97 @@ s2c2 = s2c %>%
 
 
 
-##read row counts data
+#make DGEList object, clean data
 ```{r}
-#ROSMAP_DLPFC_eCounts.tsv,ROSMAP_DLPFC_Counts.tsv
-expr_ROSMAP_counts <- read.delim2(file=paste0(dir_ROSMAPReseq,"/","ROSMAP_DLPFC_Counts.tsv"))
-str(expr_ROSMAP_counts[1:5,1:5])
-rownames(expr_ROSMAP_counts) <- expr_ROSMAP_counts[,1]
-expr_ROSMAP_counts <- expr_ROSMAP_counts[,-1]
-lapply(expr_ROSMAP_counts,as.numeric,2) -> expr_ROSMAP_counts2
-data.frame(expr_ROSMAP_counts2,check.names = F) -> expr_ROSMAP_counts2
-rownames(expr_ROSMAP_counts2) <- rownames(expr_ROSMAP_counts)
+cols_filter <- colnames(counts)    #632 samples
+s2c2$rnaseq_id = paste0("X",s2c2$specimenID)
+s2c2$rnaseq_id = gsub("^X(?=[^0-9])", "", s2c2$rnaseq_id, perl=TRUE)#(?=...): This is a positive lookahead assertion. It's a special regex construct that means "match the preceding pattern (here, X) only if it is immediately followed by the pattern inside the lookahead." The lookahead itself doesn't consume any characters; it's just a condition.
+s2c2$rnaseq_id = sub("-",".",s2c2$rnaseq_id)
 
-expr_ROSMAP_counts2[1:5,1:5]
+names_with_sample = unique(grep("^S.*\\.", cols_filter, value = TRUE))
+postfix_names_with_sample = unique(gsub("^S.*\\.","",names_with_sample))
+## An alternative way: setdiff(gsub("^S.*\\.", "", cols_filter), cols_filter)
+
+cols_filter[cols_filter %in% s2c2$rnaseq_id] ->cols_filter2  ##614 samples
+rownames(df_counts)=df_counts$feature
+df_counts2 = df_counts[,cols_filter2]
+s2c2 = s2c2[match(cols_filter2, s2c2$rnaseq_id), ]
+# Now df_counts2 and s2c2 match
+rownames(s2c2) <- s2c2$rnaseq_id
+
+# 1. Check for negative values in each row
+row_has_negative <- apply(df_counts2, 1, function(row) any(row < 0))
+
+# 2. Count the number of TRUEs (rows with at least one negative value)
+total_rows_with_negative <- sum(row_has_negative)
+
+# 6881 rows with negative counts
+```
+
+# Apply limma to cqn normalized counts
+Can I use CQN-normalized counts in limma?
+Yes — but you must treat them as log2-scale expression values, not raw counts. This means:
+
+Don't use voom(), which expects raw counts.
+
+Use limma's linear modeling pipeline directly on the CQN-normalized matrix.
+
+```{r}
+library(limma)
+# Set factors as needed
+s2c2$sex <- factor(s2c2$sex,levels=c("male","female"))
+s2c2$apoe <- gsub(0,"NoneAPOE4",s2c2$apoe4_allele)
+s2c2$apoe <- gsub(1,"OneAPOE4",s2c2$apoe)
+s2c2$apoe <- factor(s2c2$apoe,levels = c("NoneAPOE4","OneAPOE4"))
+s2c2$group <- factor(paste(s2c2$sex, s2c2$apoe, sep = "_"),levels = c("female_NoneAPOE4", "female_OneAPOE4", "male_NoneAPOE4", "male_OneAPOE4"))
+
+s2c2$diagnosis <- factor(s2c2$diagnosis,levels = c("CT","OTHER","AD"))
+
+# Build the design matrix with interaction
+design <- model.matrix(~ 0 + group + RIN + RIN2+ diagnosis, data = s2c2)
+colnames(design) <- make.names(colnames(design))  # Clean names
+
+fit <- lmFit(df_counts2, design)
+fit <- eBayes(fit)
+
+
+contrast_matrix <- makeContrasts(
+  female_APOE4_vs_None = groupfemale_OneAPOE4 - groupfemale_NoneAPOE4,
+  levels = design
+)
+
+fit2 <- contrasts.fit(fit, contrast_matrix)
+fit2 <- eBayes(fit2)
+
+topTable(fit2, coef = "female_APOE4_vs_None", number = 20)
+deg_results <- topTable(fit2, coef = "female_APOE4_vs_None", number = Inf, adjust.method = "BH")
+
+# Write to CSV
+#getwd()
+write.csv(deg_results, file = "output/DEGs_female_APOE4_vs_None.csv", row.names = TRUE)
+```
+
+```{r}
+# Define contrast matrix
+contrast_matrix <- makeContrasts(
+  female_APOE4_vs_None = sexfemale:apoeOneAPOE4 - sexfemale:apoeNoneAPOE4,
+  levels = design
+)
+
+# Fit contrast
+fit2 <- contrasts.fit(fit, contrast_matrix)
+fit2 <- eBayes(fit2)
+
+# View top differentially expressed genes
+topTable(fit2, coef = "female_APOE4_vs_None", number = 20)
+
 ```
 
 
-
-#make DGEList object, clean data
 ```{r}
-cols_filter <- colnames(expr_ROSMAP_counts2)    #632 samples
-cols_filter[cols_filter %in% paste0("X",s2c4$rnaseq_id)] ->cols_filter2  ##614 samples
-s2c4 -> s2c4_ROSMAP_yshang
-rownames(s2c4_ROSMAP_yshang) <- paste0("X",s2c4_ROSMAP_yshang$rnaseq_id)
-s2c4_ROSMAP_yshang[cols_filter2,] ->s2c4_ROSMAP_yshang
 
+x <- DGEList(df_counts2)
 
-x <- DGEList(expr_ROSMAP_counts2[,cols_filter2])
 x[1:5,1:5]
 cols_x <- colnames(x)
 cols_x == rownames(s2c4_ROSMAP_yshang)
