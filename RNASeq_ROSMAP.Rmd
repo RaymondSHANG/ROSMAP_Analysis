@@ -24,9 +24,10 @@ library(tidyverse)
 library(limma)
 library("edgeR")
 
-options(stringsAsFactors = FALSE)
 #theme_set(theme_bw())
 theme_set(theme_bw()) + theme_update(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),plot.title = element_text(hjust = 0.5),legend.title=element_blank()) #legend.position = c(0.8, 0.8),
+options(stringsAsFactors = FALSE)
+
 ```
 
 ```{r}
@@ -101,43 +102,97 @@ celltypes
 ```
 
 
-##read demographic information
+##read counts information
 ```{r}
-s2c4 <- read.csv(file = "~/Dropbox/human/ROSMAP/RNASeq/demographic_tidy2.csv",stringsAsFactors = FALSE)
-head(s2c4$rnaseq_id)
-colnames(s2c4)
+#~/Dropbox/human/RNAResequence/re_analyzing2025/harmonizationStudy/Filtered, Normalized, and Residualized Counts
+counts <- read.table(file = "../harmonizationStudy/Filtered, Normalized, and Residualized Counts/ROSMAP_Normalized_counts_(CQN).tsv",
+                    sep = "\t",
+                    header = TRUE)  # Assuming the first row contains headers
+```
 
-t2g_all <- read.csv(file="~/Dropbox/RaymondTools/DEG/tx2gene_genecodeV24_humanV3.txt",header=TRUE,stringsAsFactors = FALSE)
-head(t2g_all)
-t2g <- t2g_all[,c(1,2)]
-head(t2g)
+
+## Check sample normalizations
+```{r}
+# Assuming your raw counts are in a data frame called 'counts_raw'
+# and it's in "wide" format (genes/features as rows, samples as columns)
+
+library(ggplot2)
+library(reshape2)  # For melting the data frame
+
+# Create a long format data frame for plotting
+counts_raw_long <- melt(counts, variable.name = "sample", value.name = "raw_count")
+
+
+# Subsample 50 or 100 samples (adjust as needed)
+set.seed(42)  # For reproducibility
+subsampled_samples <- sample(unique(counts_raw_long$sample), min(100, length(unique(counts_raw_long$sample))))
+counts_long_subset <- counts_raw_long[counts_raw_long$sample %in% subsampled_samples, ]
+
+ggplot(counts_long_subset, aes(x = sample, y = raw_count)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 6)) + # Smaller font
+  ggtitle("Boxplots of Raw Counts (Subsampled)") +
+  ylab("Raw Count") +
+  xlab("Sample")
+```
+```{r}
+samples_subset = unique(counts_long_subset$sample)[1:10]
+ggplot(counts_long_subset[counts_long_subset$sample %in% samples_subset,], aes(x = sample, y = raw_count)) +
+  geom_violin() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 6)) +
+  ggtitle("Violin Plots of Raw Counts") +
+  ylab("Raw Count") +
+  xlab("Sample")
 ```
 
 
 
 
 
-
-
-#ROSMAP
+## Read demographics
 ```{r}
-#ROSMAP_DLPFC_netResidualExpression.tsv
-plotDistribution = function (x) {
-  N = length(x)
-  x <- na.omit(x)
-  hist( x,col = "light blue",
-        probability = TRUE)
-  lines(density(x), col = "red", lwd = 3)
-  rug(x)
-  print(N-length(x))
-}
+dir_ROSMAPReseq="~/Dropbox/human/RNAResequence/re_analyzing2025/ROSMAP_Analysis"  #MayoRNAseq,MSBB,ROSMAP
 
-#MAYO_CBE_TCX_netResidualExpression.tsv
-#MSSM_FP_STG_PHG_IFG_netResidualExpression.tsv
-#ROSMAP_DLPFC_netResidualExpression.tsv
+#read.table(file = "../harmonizationStudy/Filtered, Normalized, and Residualized Counts/ROSMAP_Normalized_counts_(CQN).tsv",
+#                    sep = "\t",
+#                    header = TRUE) 
+s2c <- read.table(file = "../harmonizationStudy/Filtered, Normalized, and Residualized Counts/ROSMAP_Covariates_ages_censored.tsv",
+                    sep = "\t",
+                    header = TRUE) 
+colnames(s2c)
+# [1] "specimenID"                                   "individualID"                                
+# [3] "diagnosis"                                    "tissue"                                      
+# [5] "race"                                         "spanish"                                     
+# [7] "apoe4_allele"                                 "sex"                                         
+# [9] "final_batch"                                  "pmi"                                         
+#[11] "RIN"                                          "RIN2"                                        
+#[13] "age_death"                                    "AlignmentSummaryMetrics_PCT_PF_READS_ALIGNED"
+#[15] "RnaSeqMetrics_PCT_INTRONIC_BASES"             "RnaSeqMetrics_PCT_INTERGENIC_BASES"          
+#[17] "RnaSeqMetrics_PCT_CODING_BASES"
 
-dir_ROSMAPReseq="~/Dropbox/human/RNAResequence/ROSMAP"  #MayoRNAseq,MSBB,ROSMAP
+table(s2c$diagnosis)
+table(s2c$final_batch)
+table(s2c$apoe4_allele)
+table(s2c$RIN>=5)
+table(s2c$age_death)
+table(s2c$tissue)
+table(s2c$race)
 
+# Filter data
+# race == 1
+# RIN >=5
+# apoe4_allele == 1
+# Remove batch with N<10
+s2c2 = s2c %>% 
+  filter(race==1) %>% 
+  filter(RIN>=5) %>% 
+  filter(apoe4_allele!=2) %>% 
+  group_by(final_batch) %>% 
+  filter(n() >= 10) %>%
+  ungroup() # Important to ungroup afterwards!
+# Equation could be ~ diagnosis+sex+apoe4_allele+RIN+final_batch+RIN2+tissue+age_death
 ```
 
 
